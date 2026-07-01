@@ -1,6 +1,6 @@
 module github.com/datarhei/core/v16
 
-go 1.24.0
+go 1.22
 
 require (
 	github.com/99designs/gqlgen v0.17.47
