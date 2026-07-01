@@ -30,7 +30,7 @@ jobs:
 
     docker:
         needs: versions
-        runs-on: [self-hosted]
+        runs-on: ubuntu-latest
         strategy:
             matrix:
                 include:
