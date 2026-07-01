@@ -98,23 +98,23 @@ func (ch *whepChannel) Close() {
 // egress process is configured, so the ffmpeg output address (rtp://host:port)
 // can be filled in before ffmpeg ever starts, and stays valid across ffmpeg
 // restarts/reconnects for the resource's whole lifetime.
-func (s *server) ReserveWHEP(resource string) (uint16, uint16, error) {
+func (s *server) ReserveWHEP(resource string) (string, uint16, uint16, error) {
 	s.whepLock.Lock()
 	defer s.whepLock.Unlock()
 
 	if ch, ok := s.whepChannels[resource]; ok {
-		return ch.videoPort, ch.audioPort, nil
+		return s.relayAddress, ch.videoPort, ch.audioPort, nil
 	}
 
 	videoPort, err := s.portAlloc.Allocate()
 	if err != nil {
-		return 0, 0, fmt.Errorf("allocating video port: %w", err)
+		return "", 0, 0, fmt.Errorf("allocating video port: %w", err)
 	}
 
 	audioPort, err := s.portAlloc.Allocate()
 	if err != nil {
 		s.portAlloc.Release(videoPort)
-		return 0, 0, fmt.Errorf("allocating audio port: %w", err)
+		return "", 0, 0, fmt.Errorf("allocating audio port: %w", err)
 	}
 
 	ch := &whepChannel{
@@ -128,7 +128,7 @@ func (s *server) ReserveWHEP(resource string) (uint16, uint16, error) {
 	if err != nil {
 		s.portAlloc.Release(videoPort)
 		s.portAlloc.Release(audioPort)
-		return 0, 0, fmt.Errorf("opening video relay: %w", err)
+		return "", 0, 0, fmt.Errorf("opening video relay: %w", err)
 	}
 
 	ch.audioReceiver, err = newUDPReceiver(s.relayAddress, audioPort, ch.fanOutAudio)
@@ -136,12 +136,12 @@ func (s *server) ReserveWHEP(resource string) (uint16, uint16, error) {
 		ch.videoReceiver.Close()
 		s.portAlloc.Release(videoPort)
 		s.portAlloc.Release(audioPort)
-		return 0, 0, fmt.Errorf("opening audio relay: %w", err)
+		return "", 0, 0, fmt.Errorf("opening audio relay: %w", err)
 	}
 
 	s.whepChannels[resource] = ch
 
-	return videoPort, audioPort, nil
+	return s.relayAddress, videoPort, audioPort, nil
 }
 
 // ReleaseWHEP tears down a reserved WHEP resource and disconnects any

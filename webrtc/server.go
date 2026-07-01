@@ -37,6 +37,16 @@ type Server interface {
 	// WHEPDelete ends a WHEP playing session.
 	WHEPDelete(resource, sessionID string) error
 
+	// ReserveWHEP reserves fixed loopback relay ports for a WHEP resource,
+	// so an ffmpeg egress process's output address can be configured
+	// before ffmpeg ever starts. Idempotent: safe to call again for an
+	// already-reserved resource, it just returns the existing ports.
+	ReserveWHEP(resource string) (relayAddress string, videoPort, audioPort uint16, err error)
+
+	// ReleaseWHEP tears down a reserved WHEP resource and disconnects any
+	// active viewers.
+	ReleaseWHEP(resource string)
+
 	// Close closes all sessions and releases all resources.
 	Close()
 

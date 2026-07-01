@@ -663,6 +663,11 @@ func (s *server) setRoutesV3(v3 *echo.Group) {
 	// v3 WebRTC (WHIP/WHEP)
 	if s.v3handler.webrtc != nil {
 		v3.GET("/webrtc", s.v3handler.webrtc.ListChannels)
+
+		if !s.readOnly {
+			v3.POST("/webrtc/whep/:resource", s.v3handler.webrtc.ReserveWHEP)
+			v3.DELETE("/webrtc/whep/:resource", s.v3handler.webrtc.ReleaseWHEP)
+		}
 	}
 
 	// v3 Config

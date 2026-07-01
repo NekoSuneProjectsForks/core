@@ -43,6 +43,56 @@ func (h *WebRTCHandler) ListChannels(c echo.Context) error {
 	return c.JSON(http.StatusOK, h.webrtc.Channels())
 }
 
+// WHEPRelay is the response body for reserving/inspecting a WHEP resource's
+// ffmpeg-facing relay ports.
+type WHEPRelay struct {
+	Address   string `json:"address"`
+	VideoPort uint16 `json:"video_port"`
+	AudioPort uint16 `json:"audio_port"`
+}
+
+// ReserveWHEP reserves the loopback relay ports an ffmpeg egress process
+// should send RTP to for this WHEP resource
+// @Summary Reserve relay ports for a WHEP egress resource
+// @Description Reserve (or return the already reserved) loopback relay ports for a WHEP egress resource, to be used as the ffmpeg output address.
+// @Tags v16.7.2
+// @ID webrtc-3-whep-reserve
+// @Produce json
+// @Param resource path string true "Resource name"
+// @Success 200 {object} WHEPRelay
+// @Security ApiKeyAuth
+// @Router /api/v3/webrtc/whep/{resource} [post]
+func (h *WebRTCHandler) ReserveWHEP(c echo.Context) error {
+	resource := c.Param("resource")
+
+	address, videoPort, audioPort, err := h.webrtc.ReserveWHEP(resource)
+	if err != nil {
+		return api.Err(http.StatusBadRequest, "", "%s", err)
+	}
+
+	return c.JSON(http.StatusOK, WHEPRelay{
+		Address:   address,
+		VideoPort: videoPort,
+		AudioPort: audioPort,
+	})
+}
+
+// ReleaseWHEP releases a reserved WHEP resource and disconnects any
+// active viewers
+// @Summary Release a WHEP egress resource
+// @Description Release a reserved WHEP egress resource and disconnect any active viewers.
+// @Tags v16.7.2
+// @ID webrtc-3-whep-release
+// @Param resource path string true "Resource name"
+// @Success 200 {string} string ""
+// @Security ApiKeyAuth
+// @Router /api/v3/webrtc/whep/{resource} [delete]
+func (h *WebRTCHandler) ReleaseWHEP(c echo.Context) error {
+	h.webrtc.ReleaseWHEP(c.Param("resource"))
+
+	return c.NoContent(http.StatusOK)
+}
+
 func bearerToken(c echo.Context) string {
 	auth := c.Request().Header.Get("Authorization")
 	if prefix := "Bearer "; strings.HasPrefix(auth, prefix) {
