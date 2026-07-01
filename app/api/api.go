@@ -40,6 +40,7 @@ import (
 	"github.com/datarhei/core/v16/session"
 	"github.com/datarhei/core/v16/srt"
 	"github.com/datarhei/core/v16/update"
+	"github.com/datarhei/core/v16/users"
 	"github.com/datarhei/core/v16/webrtc"
 
 	"github.com/caddyserver/certmagic"
@@ -83,6 +84,7 @@ type api struct {
 	mainserver    *gohttp.Server
 	sidecarserver *gohttp.Server
 	httpjwt       jwt.JWT
+	users         users.Registry
 	update        update.Checker
 	replacer      replace.Replacer
 
@@ -643,7 +645,21 @@ func (a *api) start() error {
 			return fmt.Errorf("unable to create JWT provider: %w", err)
 		}
 
-		if validator, err := jwt.NewLocalValidator(cfg.API.Auth.Username, cfg.API.Auth.Password); err == nil {
+		{
+			usersfs, err := fs.NewRootedDiskFilesystem(fs.RootedDiskConfig{
+				Root: cfg.DB.Dir,
+			})
+			if err != nil {
+				return fmt.Errorf("unable to create filesystem for users: %w", err)
+			}
+
+			a.users, err = users.New(usersfs, "/users.json")
+			if err != nil {
+				return fmt.Errorf("unable to create users registry: %w", err)
+			}
+		}
+
+		if validator, err := jwt.NewLocalValidatorWithUsers(cfg.API.Auth.Username, cfg.API.Auth.Password, a.users); err == nil {
 			if err := httpjwt.AddValidator(app.Name, validator); err != nil {
 				return fmt.Errorf("unable to add local JWT validator: %w", err)
 			}

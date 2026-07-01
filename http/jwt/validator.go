@@ -7,6 +7,7 @@ import (
 	"github.com/datarhei/core/v16/http/api"
 	"github.com/datarhei/core/v16/http/handler/util"
 	"github.com/datarhei/core/v16/http/jwt/jwks"
+	"github.com/datarhei/core/v16/users"
 
 	jwtgo "github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v4"
@@ -26,12 +27,30 @@ type Validator interface {
 type localValidator struct {
 	username string
 	password string
+
+	// users is optional. If set, a login that doesn't match the bootstrap
+	// admin above is also checked against it before failing, so named
+	// users created through the admin API can log in too. The bootstrap
+	// admin check always runs first and is never affected by this.
+	users users.Registry
 }
 
 func NewLocalValidator(username, password string) (Validator, error) {
 	v := &localValidator{
 		username: username,
 		password: password,
+	}
+
+	return v, nil
+}
+
+// NewLocalValidatorWithUsers is like NewLocalValidator, but also accepts
+// logins for any user in the given registry.
+func NewLocalValidatorWithUsers(username, password string, registry users.Registry) (Validator, error) {
+	v := &localValidator{
+		username: username,
+		password: password,
+		users:    registry,
 	}
 
 	return v, nil
@@ -48,11 +67,17 @@ func (v *localValidator) Validate(c echo.Context) (bool, string, error) {
 		return false, "", nil
 	}
 
-	if login.Username != v.username || login.Password != v.password {
-		return true, "", fmt.Errorf("invalid username or password")
+	if login.Username == v.username && login.Password == v.password {
+		return true, v.username, nil
 	}
 
-	return true, v.username, nil
+	if v.users != nil {
+		if u, ok := v.users.Authenticate(login.Username, login.Password); ok {
+			return true, u.Username, nil
+		}
+	}
+
+	return true, "", fmt.Errorf("invalid username or password")
 }
 
 func (v *localValidator) Cancel() {}
