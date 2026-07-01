@@ -58,6 +58,7 @@ import (
 	mwgzip "github.com/datarhei/core/v16/http/middleware/gzip"
 	mwhlsrewrite "github.com/datarhei/core/v16/http/middleware/hlsrewrite"
 	mwiplimit "github.com/datarhei/core/v16/http/middleware/iplimit"
+	mwllhls "github.com/datarhei/core/v16/http/middleware/llhls"
 	mwlog "github.com/datarhei/core/v16/http/middleware/log"
 	mwmime "github.com/datarhei/core/v16/http/middleware/mime"
 	mwredirect "github.com/datarhei/core/v16/http/middleware/redirect"
@@ -474,6 +475,9 @@ func (s *server) setRoutes() {
 		fs.Use(mwmime.NewWithConfig(mwmime.Config{
 			MimeTypesFile:      s.mimeTypesFile,
 			DefaultContentType: filesystem.DefaultContentType,
+		}))
+		fs.Use(mwllhls.NewWithConfig(mwllhls.Config{
+			Filesystem: filesystem.Filesystem,
 		}))
 
 		if filesystem.Gzip {

@@ -121,6 +121,13 @@ func (f *diskFile) Read(p []byte) (int, error) {
 	return f.file.Read(p)
 }
 
+// Seek makes diskFile satisfy io.Seeker, which the HTTP filesystem handler
+// uses to serve byte-range requests (needed for LL-HLS partial segment
+// preload hints).
+func (f *diskFile) Seek(offset int64, whence int) (int64, error) {
+	return f.file.Seek(offset, whence)
+}
+
 // diskFilesystem implements the Filesystem interface
 type diskFilesystem struct {
 	metadata map[string]string

@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/datarhei/core/v16/http/api"
@@ -68,12 +71,84 @@ func (h *FSHandler) GetFile(c echo.Context) error {
 	}
 
 	c.Response().Header().Set(echo.HeaderContentType, mimeType)
+	c.Response().Header().Set("Accept-Ranges", "bytes")
 
 	if c.Request().Method == "HEAD" {
 		return c.Blob(http.StatusOK, "application/data", nil)
 	}
 
+	if rangeHeader := c.Request().Header.Get("Range"); len(rangeHeader) != 0 {
+		if seeker, ok := file.(io.Seeker); ok {
+			if start, end, ok := parseRange(rangeHeader, stat.Size()); ok {
+				if _, err := seeker.Seek(start, io.SeekStart); err == nil {
+					length := end - start + 1
+
+					c.Response().Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, stat.Size()))
+					c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(length, 10))
+
+					return c.Stream(http.StatusPartialContent, "application/data", io.LimitReader(file, length))
+				}
+			}
+		}
+	}
+
 	return c.Stream(http.StatusOK, "application/data", file)
+}
+
+// parseRange parses a single-range HTTP Range header (e.g. "bytes=0-1023" or
+// "bytes=1024-") against a known file size. It doesn't support multi-range
+// requests (e.g. "bytes=0-10,20-30"), which is a common, well-understood
+// limitation shared by many minimal Range implementations.
+func parseRange(header string, size int64) (start, end int64, ok bool) {
+	const prefix = "bytes="
+
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, false
+	}
+
+	spec := strings.TrimPrefix(header, prefix)
+	if strings.Contains(spec, ",") {
+		return 0, 0, false
+	}
+
+	parts := strings.SplitN(spec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	if len(parts[0]) == 0 {
+		// Suffix range, e.g. "-500" means the last 500 bytes
+		suffix, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || suffix <= 0 {
+			return 0, 0, false
+		}
+
+		if suffix > size {
+			suffix = size
+		}
+
+		return size - suffix, size - 1, true
+	}
+
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false
+	}
+
+	if len(parts[1]) == 0 {
+		return start, size - 1, true
+	}
+
+	end, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || end < start {
+		return 0, 0, false
+	}
+
+	if end >= size {
+		end = size - 1
+	}
+
+	return start, end, true
 }
 
 func (h *FSHandler) PutFile(c echo.Context) error {
