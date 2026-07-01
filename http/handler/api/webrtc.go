@@ -93,6 +93,72 @@ func (h *WebRTCHandler) ReleaseWHEP(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
+// WHIPClientRelay is the response body for publishing/inspecting a resource
+// relayed out to a remote WHIP server.
+type WHIPClientRelay struct {
+	Address   string `json:"address"`
+	VideoPort uint16 `json:"video_port"`
+	AudioPort uint16 `json:"audio_port"`
+}
+
+// WHIPClientPublishRequest is the request body for PublishWHIPClient.
+type WHIPClientPublishRequest struct {
+	RemoteURL string `json:"remote_url"`
+	Token     string `json:"token"`
+}
+
+// PublishWHIPClient starts relaying a resource's ffmpeg output to a remote
+// WHIP server
+// @Summary Publish a resource to a remote WHIP server
+// @Description Start relaying a resource's ffmpeg output to a remote WHIP server (this core acts as the WHIP client/publisher). Returns the loopback relay ports to use as the ffmpeg output address.
+// @Tags v16.7.2
+// @ID webrtc-3-whipclient-publish
+// @Accept json
+// @Produce json
+// @Param resource path string true "Resource name"
+// @Param data body WHIPClientPublishRequest true "Remote WHIP server URL and optional bearer token"
+// @Success 200 {object} WHIPClientRelay
+// @Security ApiKeyAuth
+// @Router /api/v3/webrtc/whip/{resource} [post]
+func (h *WebRTCHandler) PublishWHIPClient(c echo.Context) error {
+	resource := c.Param("resource")
+
+	var req WHIPClientPublishRequest
+	if err := c.Bind(&req); err != nil {
+		return api.Err(http.StatusBadRequest, "", "invalid request body: %s", err)
+	}
+
+	if len(req.RemoteURL) == 0 {
+		return api.Err(http.StatusBadRequest, "", "remote_url is required")
+	}
+
+	address, videoPort, audioPort, err := h.webrtc.PublishWHIP(resource, req.RemoteURL, req.Token)
+	if err != nil {
+		return api.Err(http.StatusBadGateway, "", "%s", err)
+	}
+
+	return c.JSON(http.StatusOK, WHIPClientRelay{
+		Address:   address,
+		VideoPort: videoPort,
+		AudioPort: audioPort,
+	})
+}
+
+// UnpublishWHIPClient stops relaying a resource to its remote WHIP server
+// @Summary Stop publishing a resource to a remote WHIP server
+// @Description Stop relaying a resource to its remote WHIP server, telling the remote server the session has ended.
+// @Tags v16.7.2
+// @ID webrtc-3-whipclient-unpublish
+// @Param resource path string true "Resource name"
+// @Success 200 {string} string ""
+// @Security ApiKeyAuth
+// @Router /api/v3/webrtc/whip/{resource} [delete]
+func (h *WebRTCHandler) UnpublishWHIPClient(c echo.Context) error {
+	h.webrtc.UnpublishWHIP(c.Param("resource"))
+
+	return c.NoContent(http.StatusOK)
+}
+
 func bearerToken(c echo.Context) string {
 	auth := c.Request().Header.Get("Authorization")
 	if prefix := "Bearer "; strings.HasPrefix(auth, prefix) {

@@ -12,11 +12,12 @@ import (
 	pion "github.com/pion/webrtc/v4"
 )
 
-// Channels lists the currently active WHIP (publishing) and WHEP (playing)
-// resources.
+// Channels lists the currently active WHIP (publishing), WHEP (playing),
+// and WHIPClient (relaying out to a remote WHIP server) resources.
 type Channels struct {
-	WHIP []string
-	WHEP []string
+	WHIP       []string
+	WHEP       []string
+	WHIPClient []string
 }
 
 // Server represents a WHIP/WHEP server
@@ -47,6 +48,15 @@ type Server interface {
 	// active viewers.
 	ReleaseWHEP(resource string)
 
+	// PublishWHIP relays a resource's ffmpeg output to a remote WHIP server
+	// (this instance acts as the WHIP client/publisher). Idempotent: safe
+	// to call again for an already-published resource, it just returns the
+	// existing relay ports.
+	PublishWHIP(resource, remoteURL, token string) (relayAddress string, videoPort, audioPort uint16, err error)
+
+	// UnpublishWHIP ends a remote WHIP publish.
+	UnpublishWHIP(resource string)
+
 	// Close closes all sessions and releases all resources.
 	Close()
 
@@ -71,6 +81,9 @@ type server struct {
 
 	whepLock     sync.RWMutex
 	whepChannels map[string]*whepChannel
+
+	whipClientLock     sync.RWMutex
+	whipClientChannels map[string]*whipClientChannel
 }
 
 // New creates a new WHIP/WHEP server according to the given config
@@ -102,8 +115,9 @@ func New(config Config) (Server, error) {
 		portAlloc:    newPortAllocator(config.RelayPortMin, config.RelayPortMax),
 		relayAddress: config.RelayAddress,
 		sdpPath:      config.SDPPath,
-		whipChannels: map[string]*whipChannel{},
-		whepChannels: map[string]*whepChannel{},
+		whipChannels:       map[string]*whipChannel{},
+		whepChannels:       map[string]*whepChannel{},
+		whipClientChannels: map[string]*whipClientChannel{},
 	}
 
 	if s.collector == nil {
@@ -196,6 +210,13 @@ func (s *server) Close() {
 	}
 	s.whepChannels = map[string]*whepChannel{}
 	s.whepLock.Unlock()
+
+	s.whipClientLock.Lock()
+	for _, ch := range s.whipClientChannels {
+		ch.Close()
+	}
+	s.whipClientChannels = map[string]*whipClientChannel{}
+	s.whipClientLock.Unlock()
 }
 
 func (s *server) Channels() Channels {
@@ -212,6 +233,12 @@ func (s *server) Channels() Channels {
 		channels.WHEP = append(channels.WHEP, id)
 	}
 	s.whepLock.RUnlock()
+
+	s.whipClientLock.RLock()
+	for id := range s.whipClientChannels {
+		channels.WHIPClient = append(channels.WHIPClient, id)
+	}
+	s.whipClientLock.RUnlock()
 
 	return channels
 }

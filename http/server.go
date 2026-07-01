@@ -667,6 +667,8 @@ func (s *server) setRoutesV3(v3 *echo.Group) {
 		if !s.readOnly {
 			v3.POST("/webrtc/whep/:resource", s.v3handler.webrtc.ReserveWHEP)
 			v3.DELETE("/webrtc/whep/:resource", s.v3handler.webrtc.ReleaseWHEP)
+			v3.POST("/webrtc/whip/:resource", s.v3handler.webrtc.PublishWHIPClient)
+			v3.DELETE("/webrtc/whip/:resource", s.v3handler.webrtc.UnpublishWHIPClient)
 		}
 	}
 
