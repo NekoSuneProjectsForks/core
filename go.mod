@@ -1,6 +1,6 @@
 module github.com/datarhei/core/v16
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/99designs/gqlgen v0.17.47
@@ -32,6 +32,7 @@ require (
 	github.com/vektah/gqlparser/v2 v2.5.12
 	github.com/xeipuuv/gojsonschema v1.2.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/crypto v0.48.0
 	golang.org/x/mod v0.32.0
 )
 
@@ -109,7 +110,6 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/blake3 v0.2.3 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
