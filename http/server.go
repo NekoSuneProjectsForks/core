@@ -51,6 +51,7 @@ import (
 	"github.com/datarhei/core/v16/rtmp"
 	"github.com/datarhei/core/v16/session"
 	"github.com/datarhei/core/v16/srt"
+	"github.com/datarhei/core/v16/users"
 	"github.com/datarhei/core/v16/webrtc"
 
 	mwcache "github.com/datarhei/core/v16/http/middleware/cache"
@@ -76,25 +77,27 @@ import (
 var ListenAndServe = http.ListenAndServe
 
 type Config struct {
-	Logger        log.Logger
-	LogBuffer     log.BufferWriter
-	Restream      restream.Restreamer
-	Metrics       monitor.HistoryReader
-	Prometheus    prometheus.Reader
-	MimeTypesFile string
-	Filesystems   []fs.FS
-	IPLimiter     net.IPLimiter
-	Profiling     bool
-	Cors          CorsConfig
-	RTMP          rtmp.Server
-	SRT           srt.Server
-	WebRTC        webrtc.Server
-	JWT           jwt.JWT
-	Config        cfgstore.Store
-	Cache         cache.Cacher
-	Sessions      session.RegistryReader
-	Router        router.Router
-	ReadOnly      bool
+	Logger            log.Logger
+	LogBuffer         log.BufferWriter
+	Restream          restream.Restreamer
+	Metrics           monitor.HistoryReader
+	Prometheus        prometheus.Reader
+	MimeTypesFile     string
+	Filesystems       []fs.FS
+	IPLimiter         net.IPLimiter
+	Profiling         bool
+	Cors              CorsConfig
+	RTMP              rtmp.Server
+	SRT               srt.Server
+	WebRTC            webrtc.Server
+	JWT               jwt.JWT
+	Config            cfgstore.Store
+	Cache             cache.Cacher
+	Sessions          session.RegistryReader
+	Router            router.Router
+	ReadOnly          bool
+	Users             users.Registry
+	BootstrapUsername string
 }
 
 type CorsConfig struct {
@@ -128,6 +131,7 @@ type server struct {
 		session   *api.SessionHandler
 		widget    *api.WidgetHandler
 		resources *api.MetricsHandler
+		users     *api.UsersHandler
 	}
 
 	middleware struct {
@@ -151,7 +155,9 @@ type server struct {
 	mimeTypesFile string
 	profiling     bool
 
-	readOnly bool
+	readOnly          bool
+	users             users.Registry
+	bootstrapUsername string
 }
 
 type filesystem struct {
@@ -163,10 +169,12 @@ type filesystem struct {
 
 func NewServer(config Config) (Server, error) {
 	s := &server{
-		logger:        config.Logger,
-		mimeTypesFile: config.MimeTypesFile,
-		profiling:     config.Profiling,
-		readOnly:      config.ReadOnly,
+		logger:            config.Logger,
+		mimeTypesFile:     config.MimeTypesFile,
+		profiling:         config.Profiling,
+		readOnly:          config.ReadOnly,
+		users:             config.Users,
+		bootstrapUsername: config.BootstrapUsername,
 	}
 
 	s.filesystems = map[string]*filesystem{}
@@ -235,10 +243,18 @@ func NewServer(config Config) (Server, error) {
 	if config.Restream != nil {
 		s.v3handler.restream = api.NewRestream(
 			config.Restream,
+			config.Users,
+			config.BootstrapUsername,
 		)
 
 		s.v3handler.playout = api.NewPlayout(
 			config.Restream,
+		)
+	}
+
+	if config.Users != nil {
+		s.v3handler.users = api.NewUsers(
+			config.Users,
 		)
 	}
 
@@ -618,6 +634,21 @@ func (s *server) setRoutesV3(v3 *echo.Group) {
 
 				v3.PUT("/process/:id/playout/:inputid/stream", s.v3handler.playout.SetStream)
 			}
+		}
+	}
+
+	// v3 Users (admin only)
+	if s.v3handler.users != nil {
+		usersGroup := v3.Group("/users")
+		usersGroup.Use(api.RequireAdmin(s.users, s.bootstrapUsername))
+
+		usersGroup.GET("", s.v3handler.users.GetAll)
+		usersGroup.GET("/:id", s.v3handler.users.Get)
+
+		if !s.readOnly {
+			usersGroup.POST("", s.v3handler.users.Create)
+			usersGroup.PUT("/:id", s.v3handler.users.Update)
+			usersGroup.DELETE("/:id", s.v3handler.users.Delete)
 		}
 	}
 

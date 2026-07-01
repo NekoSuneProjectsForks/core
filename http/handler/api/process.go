@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/datarhei/core/v16/http/api"
 	"github.com/datarhei/core/v16/http/handler/util"
 	"github.com/datarhei/core/v16/restream"
+	"github.com/datarhei/core/v16/users"
 
 	"github.com/labstack/echo/v4"
 	"github.com/lithammer/shortuuid/v4"
@@ -14,14 +16,79 @@ import (
 
 // The RestreamHandler type provides functions to interact with a Restreamer instance
 type RestreamHandler struct {
-	restream restream.Restreamer
+	restream          restream.Restreamer
+	users             users.Registry
+	bootstrapUsername string
 }
 
 // NewRestream return a new Restream type. You have to provide a valid Restreamer instance.
-func NewRestream(restream restream.Restreamer) *RestreamHandler {
+// registry and bootstrapUsername are optional; if registry is nil, every caller is treated
+// as admin and no per-process ownership/quota restrictions apply.
+func NewRestream(restream restream.Restreamer, registry users.Registry, bootstrapUsername string) *RestreamHandler {
 	return &RestreamHandler{
-		restream: restream,
+		restream:          restream,
+		users:             registry,
+		bootstrapUsername: bootstrapUsername,
 	}
+}
+
+// identity returns the caller's username and whether they're an admin.
+func (h *RestreamHandler) identity(c echo.Context) (string, bool) {
+	return Identity(c, h.users, h.bootstrapUsername)
+}
+
+// owner returns the owner of a process, or false if the process doesn't exist.
+func (h *RestreamHandler) owner(id string) (string, bool) {
+	p, err := h.restream.GetProcess(id)
+	if err != nil {
+		return "", false
+	}
+
+	if p.Config == nil {
+		return "", true
+	}
+
+	return p.Config.Owner, true
+}
+
+// authorize returns an API error if the caller is neither the owner of the
+// process nor an admin. Non-owned processes are reported as not found
+// rather than forbidden, so their existence isn't leaked to other users.
+func (h *RestreamHandler) authorize(c echo.Context, id string) error {
+	username, isAdmin := h.identity(c)
+	if isAdmin {
+		return nil
+	}
+
+	owner, ok := h.owner(id)
+	if !ok || owner != username {
+		return api.Err(http.StatusNotFound, "Unknown process ID", "%s", id)
+	}
+
+	return nil
+}
+
+// checkQuota returns an error if the given (non-admin) user has already
+// reached their maximum number of owned processes.
+func (h *RestreamHandler) checkQuota(username string) error {
+	u, ok := h.users.GetByUsername(username)
+	if !ok {
+		return fmt.Errorf("unknown user")
+	}
+
+	count := 0
+	for _, id := range h.restream.GetProcessIDs("", "") {
+		owner, ok := h.owner(id)
+		if ok && owner == username {
+			count++
+		}
+	}
+
+	if count >= u.MaxProcesses {
+		return fmt.Errorf("maximum number of processes (%d) reached", u.MaxProcesses)
+	}
+
+	return nil
 }
 
 // Add adds a new process
@@ -57,6 +124,15 @@ func (h *RestreamHandler) Add(c echo.Context) error {
 
 	config := process.Marshal()
 
+	username, isAdmin := h.identity(c)
+	config.Owner = username
+
+	if h.users != nil && !isAdmin {
+		if err := h.checkQuota(username); err != nil {
+			return api.Err(http.StatusForbidden, "Process quota exceeded", "%s", err.Error())
+		}
+	}
+
 	if err := h.restream.AddProcess(config); err != nil {
 		return api.Err(http.StatusBadRequest, "Invalid process config", "%s", err.Error())
 	}
@@ -91,10 +167,22 @@ func (h *RestreamHandler) GetAll(c echo.Context) error {
 
 	ids := h.restream.GetProcessIDs(idpattern, refpattern)
 
+	username, isAdmin := h.identity(c)
+	canAccess := func(id string) bool {
+		if isAdmin {
+			return true
+		}
+		owner, ok := h.owner(id)
+		return ok && owner == username
+	}
+
 	processes := []api.Process{}
 
 	if len(wantids) == 0 || len(reference) != 0 {
 		for _, id := range ids {
+			if !canAccess(id) {
+				continue
+			}
 			if p, err := h.getProcess(id, filter); err == nil {
 				if len(reference) != 0 && p.Reference != reference {
 					continue
@@ -106,6 +194,9 @@ func (h *RestreamHandler) GetAll(c echo.Context) error {
 		for _, id := range ids {
 			for _, wantid := range wantids {
 				if wantid == id {
+					if !canAccess(id) {
+						continue
+					}
 					if p, err := h.getProcess(id, filter); err == nil {
 						processes = append(processes, p)
 					}
@@ -133,6 +224,10 @@ func (h *RestreamHandler) Get(c echo.Context) error {
 	id := util.PathParam(c, "id")
 	filter := util.DefaultQuery(c, "filter", "")
 
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
+
 	p, err := h.getProcess(id, filter)
 	if err != nil {
 		return api.Err(http.StatusNotFound, "Unknown process ID", "%s", err)
@@ -154,6 +249,10 @@ func (h *RestreamHandler) Get(c echo.Context) error {
 // @Router /api/v3/process/{id} [delete]
 func (h *RestreamHandler) Delete(c echo.Context) error {
 	id := util.PathParam(c, "id")
+
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
 
 	if err := h.restream.StopProcess(id); err != nil {
 		return api.Err(http.StatusNotFound, "Unknown process ID", "%s", err)
@@ -183,6 +282,10 @@ func (h *RestreamHandler) Delete(c echo.Context) error {
 func (h *RestreamHandler) Update(c echo.Context) error {
 	id := util.PathParam(c, "id")
 
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
+
 	process := api.ProcessConfig{
 		ID:        id,
 		Type:      "ffmpeg",
@@ -202,6 +305,10 @@ func (h *RestreamHandler) Update(c echo.Context) error {
 	}
 
 	config := process.Marshal()
+	if current.Config != nil {
+		// Ownership isn't client-editable, it's fixed at creation time.
+		config.Owner = current.Config.Owner
+	}
 
 	if err := h.restream.UpdateProcess(id, config); err != nil {
 		if err == restream.ErrUnknownProcess {
@@ -232,6 +339,10 @@ func (h *RestreamHandler) Update(c echo.Context) error {
 // @Router /api/v3/process/{id}/command [put]
 func (h *RestreamHandler) Command(c echo.Context) error {
 	id := util.PathParam(c, "id")
+
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
 
 	var command api.Command
 
@@ -274,6 +385,10 @@ func (h *RestreamHandler) Command(c echo.Context) error {
 func (h *RestreamHandler) GetConfig(c echo.Context) error {
 	id := util.PathParam(c, "id")
 
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
+
 	p, err := h.restream.GetProcess(id)
 	if err != nil {
 		return api.Err(http.StatusNotFound, "Unknown process ID", "%s", err)
@@ -299,6 +414,10 @@ func (h *RestreamHandler) GetConfig(c echo.Context) error {
 // @Router /api/v3/process/{id}/state [get]
 func (h *RestreamHandler) GetState(c echo.Context) error {
 	id := util.PathParam(c, "id")
+
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
 
 	s, err := h.restream.GetProcessState(id)
 	if err != nil {
@@ -326,6 +445,10 @@ func (h *RestreamHandler) GetState(c echo.Context) error {
 func (h *RestreamHandler) GetReport(c echo.Context) error {
 	id := util.PathParam(c, "id")
 
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
+
 	l, err := h.restream.GetProcessLog(id)
 	if err != nil {
 		return api.Err(http.StatusNotFound, "Unknown process ID", "%s", err)
@@ -349,6 +472,10 @@ func (h *RestreamHandler) GetReport(c echo.Context) error {
 // @Router /api/v3/process/{id}/probe [get]
 func (h *RestreamHandler) Probe(c echo.Context) error {
 	id := util.PathParam(c, "id")
+
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
 
 	probe := h.restream.Probe(id)
 
@@ -412,6 +539,10 @@ func (h *RestreamHandler) GetProcessMetadata(c echo.Context) error {
 	id := util.PathParam(c, "id")
 	key := util.PathParam(c, "key")
 
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
+
 	data, err := h.restream.GetProcessMetadata(id, key)
 	if err != nil {
 		return api.Err(http.StatusNotFound, "Unknown process ID", "%s", err)
@@ -437,6 +568,10 @@ func (h *RestreamHandler) GetProcessMetadata(c echo.Context) error {
 func (h *RestreamHandler) SetProcessMetadata(c echo.Context) error {
 	id := util.PathParam(c, "id")
 	key := util.PathParam(c, "key")
+
+	if err := h.authorize(c, id); err != nil {
+		return err
+	}
 
 	if len(key) == 0 {
 		return api.Err(http.StatusBadRequest, "Invalid key", "The key must not be of length 0")
@@ -545,6 +680,10 @@ func (h *RestreamHandler) getProcess(id, filterString string) (api.Process, erro
 		Type:      "ffmpeg",
 		CreatedAt: process.CreatedAt,
 		UpdatedAt: process.UpdatedAt,
+	}
+
+	if process.Config != nil {
+		info.Owner = process.Config.Owner
 	}
 
 	if wants["config"] {

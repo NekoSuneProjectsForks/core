@@ -13,6 +13,7 @@ type Process struct {
 	ID        string         `json:"id" jsonschema:"minLength=1"`
 	Type      string         `json:"type" jsonschema:"enum=ffmpeg"`
 	Reference string         `json:"reference"`
+	Owner     string         `json:"owner,omitempty"`
 	CreatedAt int64          `json:"created_at" jsonschema:"minimum=0" format:"int64"`
 	UpdatedAt int64          `json:"updated_at" jsonschema:"minimum=0" format:"int64"`
 	Config    *ProcessConfig `json:"config,omitempty"`

@@ -25,7 +25,7 @@ func getDummyRestreamHandler() (*RestreamHandler, error) {
 		return nil, err
 	}
 
-	handler := NewRestream(rs)
+	handler := NewRestream(rs, nil, "")
 
 	return handler, nil
 }

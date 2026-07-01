@@ -1058,14 +1058,16 @@ func (a *api) start() error {
 		Cors: http.CorsConfig{
 			Origins: cfg.Storage.CORS.Origins,
 		},
-		RTMP:     a.rtmpserver,
-		SRT:      a.srtserver,
-		WebRTC:   a.webrtcserver,
-		JWT:      a.httpjwt,
-		Config:   a.config.store,
-		Sessions: a.sessions,
-		Router:   router,
-		ReadOnly: cfg.API.ReadOnly,
+		RTMP:              a.rtmpserver,
+		SRT:               a.srtserver,
+		WebRTC:            a.webrtcserver,
+		JWT:               a.httpjwt,
+		Config:            a.config.store,
+		Sessions:          a.sessions,
+		Router:            router,
+		ReadOnly:          cfg.API.ReadOnly,
+		Users:             a.users,
+		BootstrapUsername: cfg.API.Auth.Username,
 	}
 
 	mainserverhandler, err := http.NewServer(serverConfig)
