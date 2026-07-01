@@ -40,6 +40,7 @@ import (
 	"github.com/datarhei/core/v16/session"
 	"github.com/datarhei/core/v16/srt"
 	"github.com/datarhei/core/v16/update"
+	"github.com/datarhei/core/v16/webrtc"
 
 	"github.com/caddyserver/certmagic"
 	"go.uber.org/zap"
@@ -73,6 +74,7 @@ type api struct {
 	s3fs          map[string]fs.Filesystem
 	rtmpserver    rtmp.Server
 	srtserver     srt.Server
+	webrtcserver  webrtc.Server
 	metrics       monitor.HistoryMonitor
 	prom          prometheus.Metrics
 	service       service.Service
@@ -98,6 +100,7 @@ type api struct {
 			rtmp    log.Logger
 			rtmps   log.Logger
 			srt     log.Logger
+			webrtc  log.Logger
 		}
 	}
 
@@ -924,6 +927,29 @@ func (a *api) start() error {
 		a.srtserver = srtserver
 	}
 
+	if cfg.WebRTC.Enable {
+		a.log.logger.webrtc = a.log.logger.core.WithComponent("WebRTC")
+
+		config := webrtc.Config{
+			Logger:        a.log.logger.webrtc,
+			Collector:     a.sessions.Collector("webrtc"),
+			Token:         cfg.WebRTC.Token,
+			ICEUDPMuxPort: cfg.WebRTC.ICEUDPMuxPort,
+			ICEServers:    cfg.WebRTC.ICEServers,
+			NAT1To1IPs:    cfg.WebRTC.NAT1To1IPs,
+			RelayPortMin:  uint16(cfg.WebRTC.RelayPortMin),
+			RelayPortMax:  uint16(cfg.WebRTC.RelayPortMax),
+			SDPPath:       filepath.Join(cfg.Storage.Disk.Dir, "webrtc"),
+		}
+
+		webrtcserver, err := webrtc.New(config)
+		if err != nil {
+			return fmt.Errorf("unable to create WebRTC server: %w", err)
+		}
+
+		a.webrtcserver = webrtcserver
+	}
+
 	logcontext := "HTTP"
 	if cfg.TLS.Enable {
 		logcontext = "HTTPS"
@@ -1014,6 +1040,7 @@ func (a *api) start() error {
 		},
 		RTMP:     a.rtmpserver,
 		SRT:      a.srtserver,
+		WebRTC:   a.webrtcserver,
 		JWT:      a.httpjwt,
 		Config:   a.config.store,
 		Sessions: a.sessions,
@@ -1352,6 +1379,14 @@ func (a *api) stop() {
 
 		a.srtserver.Close()
 		a.srtserver = nil
+	}
+
+	// Stop the WebRTC server
+	if a.webrtcserver != nil {
+		a.log.logger.webrtc.Info().Log("Stopping ...")
+
+		a.webrtcserver.Close()
+		a.webrtcserver = nil
 	}
 
 	// Stop the RTMP server

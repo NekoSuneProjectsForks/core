@@ -51,6 +51,7 @@ import (
 	"github.com/datarhei/core/v16/rtmp"
 	"github.com/datarhei/core/v16/session"
 	"github.com/datarhei/core/v16/srt"
+	"github.com/datarhei/core/v16/webrtc"
 
 	mwcache "github.com/datarhei/core/v16/http/middleware/cache"
 	mwcors "github.com/datarhei/core/v16/http/middleware/cors"
@@ -86,6 +87,7 @@ type Config struct {
 	Cors          CorsConfig
 	RTMP          rtmp.Server
 	SRT           srt.Server
+	WebRTC        webrtc.Server
 	JWT           jwt.JWT
 	Config        cfgstore.Store
 	Cache         cache.Cacher
@@ -120,6 +122,7 @@ type server struct {
 		playout   *api.PlayoutHandler
 		rtmp      *api.RTMPHandler
 		srt       *api.SRTHandler
+		webrtc    *api.WebRTCHandler
 		config    *api.ConfigHandler
 		session   *api.SessionHandler
 		widget    *api.WidgetHandler
@@ -265,6 +268,12 @@ func NewServer(config Config) (Server, error) {
 	if config.SRT != nil {
 		s.v3handler.srt = api.NewSRT(
 			config.SRT,
+		)
+	}
+
+	if config.WebRTC != nil {
+		s.v3handler.webrtc = api.NewWebRTC(
+			config.WebRTC,
 		)
 	}
 
@@ -431,6 +440,25 @@ func (s *server) setRoutes() {
 	doc := s.router.Group("/api/swagger/*")
 	doc.Use(gzipMiddleware)
 	doc.GET("", echoSwagger.WrapHandler)
+
+	// WHIP/WHEP (WebRTC). These are deliberately outside of /api and the
+	// admin JWT middleware: publishing/playing authenticates with a
+	// per-resource token (like RTMP/SRT), not an admin session.
+	if s.v3handler.webrtc != nil {
+		whip := s.router.Group("/whip")
+		if s.middleware.iplimit != nil {
+			whip.Use(s.middleware.iplimit)
+		}
+		whip.POST("/:resource", s.v3handler.webrtc.WHIP)
+		whip.DELETE("/:resource/:session", s.v3handler.webrtc.WHIPDelete)
+
+		whep := s.router.Group("/whep")
+		if s.middleware.iplimit != nil {
+			whep.Use(s.middleware.iplimit)
+		}
+		whep.POST("/:resource", s.v3handler.webrtc.WHEP)
+		whep.DELETE("/:resource/:session", s.v3handler.webrtc.WHEPDelete)
+	}
 
 	// Mount filesystems
 	for _, filesystem := range s.filesystems {
@@ -626,6 +654,11 @@ func (s *server) setRoutesV3(v3 *echo.Group) {
 	// v3 SRT
 	if s.v3handler.srt != nil {
 		v3.GET("/srt", s.v3handler.srt.ListChannels)
+	}
+
+	// v3 WebRTC (WHIP/WHEP)
+	if s.v3handler.webrtc != nil {
+		v3.GET("/webrtc", s.v3handler.webrtc.ListChannels)
 	}
 
 	// v3 Config

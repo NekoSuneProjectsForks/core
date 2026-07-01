@@ -113,6 +113,15 @@ type Data struct {
 			Topics []string `json:"topics"`
 		} `json:"log"`
 	} `json:"srt"`
+	WebRTC struct {
+		Enable        bool     `json:"enable"`
+		Token         string   `json:"token"`
+		ICEUDPMuxPort int      `json:"ice_udp_mux_port" format:"int"`
+		ICEServers    []string `json:"ice_servers"`
+		NAT1To1IPs    []string `json:"nat1to1_ips"`
+		RelayPortMin  int      `json:"relay_port_min" format:"int"`
+		RelayPortMax  int      `json:"relay_port_max" format:"int"`
+	} `json:"webrtc"`
 	FFmpeg struct {
 		Binary       string `json:"binary"`
 		MaxProcesses int64  `json:"max_processes" format:"int64"`

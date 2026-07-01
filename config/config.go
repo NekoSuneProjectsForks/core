@@ -227,6 +227,15 @@ func (d *Config) init() {
 	d.vars.Register(value.NewBool(&d.SRT.Log.Enable, false), "srt.log.enable", "CORE_SRT_LOG_ENABLE", nil, "Enable SRT server logging", false, false)
 	d.vars.Register(value.NewStringList(&d.SRT.Log.Topics, []string{}, ","), "srt.log.topics", "CORE_SRT_LOG_TOPICS", nil, "List of topics to log", false, false)
 
+	// WebRTC (WHIP/WHEP)
+	d.vars.Register(value.NewBool(&d.WebRTC.Enable, false), "webrtc.enable", "CORE_WEBRTC_ENABLE", nil, "Enable WHIP/WHEP WebRTC server", false, false)
+	d.vars.Register(value.NewString(&d.WebRTC.Token, ""), "webrtc.token", "CORE_WEBRTC_TOKEN", nil, "WebRTC token for publishing (WHIP) and playing (WHEP)", false, true)
+	d.vars.Register(value.NewPort(&d.WebRTC.ICEUDPMuxPort, 8189), "webrtc.ice_udp_mux_port", "CORE_WEBRTC_ICE_UDP_MUX_PORT", nil, "Single UDP port used for all WHIP/WHEP ICE and media traffic", false, false)
+	d.vars.Register(value.NewStringList(&d.WebRTC.ICEServers, []string{}, ","), "webrtc.ice_servers", "CORE_WEBRTC_ICE_SERVERS", nil, "List of STUN/TURN server URLs", false, false)
+	d.vars.Register(value.NewStringList(&d.WebRTC.NAT1To1IPs, []string{}, ","), "webrtc.nat1to1_ips", "CORE_WEBRTC_NAT1TO1_IPS", nil, "Public IP(s) to advertise as host candidates when running behind NAT/Docker port-mapping", false, false)
+	d.vars.Register(value.NewInt(&d.WebRTC.RelayPortMin, 20000), "webrtc.relay_port_min", "CORE_WEBRTC_RELAY_PORT_MIN", nil, "Lower bound of the local UDP port range used to bridge WHIP/WHEP RTP to ffmpeg", false, false)
+	d.vars.Register(value.NewInt(&d.WebRTC.RelayPortMax, 20500), "webrtc.relay_port_max", "CORE_WEBRTC_RELAY_PORT_MAX", nil, "Upper bound of the local UDP port range used to bridge WHIP/WHEP RTP to ffmpeg", false, false)
+
 	// FFmpeg
 	d.vars.Register(value.NewExec(&d.FFmpeg.Binary, "ffmpeg", d.fs), "ffmpeg.binary", "CORE_FFMPEG_BINARY", nil, "Path to ffmpeg binary", true, false)
 	d.vars.Register(value.NewInt64(&d.FFmpeg.MaxProcesses, 0), "ffmpeg.max_processes", "CORE_FFMPEG_MAXPROCESSES", nil, "Max. allowed simultaneously running ffmpeg instances, 0 for unlimited", false, false)
