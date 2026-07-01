@@ -2,9 +2,28 @@ package webrtc
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net"
 	"sync"
 )
+
+// derivePort deterministically maps salt+name to a port in [min, max) using
+// FNV-1a. It's used for WHEP relay ports so a UI can independently compute
+// the same rtp://host:port ffmpeg output address a client will need,
+// without a reservation round-trip. The JS-side implementation must hash
+// the same concatenated byte sequence (parts joined in order, no
+// delimiter) for the two to agree - see the port derivation helper next to
+// the WHEP UI component.
+func derivePort(min, max uint16, parts ...string) uint16 {
+	h := fnv.New32a()
+	for _, p := range parts {
+		h.Write([]byte(p))
+	}
+
+	span := uint32(max - min)
+
+	return min + uint16(h.Sum32()%span)
+}
 
 // portAllocator hands out local UDP ports from a fixed range for the
 // ffmpeg-facing side of WHIP/WHEP resources.

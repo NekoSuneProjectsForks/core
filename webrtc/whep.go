@@ -92,29 +92,37 @@ func (ch *whepChannel) Close() {
 	}
 }
 
-// ReserveWHEP reserves fixed loopback relay ports for a WHEP resource. It's
-// idempotent: calling it again for a resource that's already reserved just
-// returns the existing ports. This is meant to be called once when a WHEP
-// egress process is configured, so the ffmpeg output address (rtp://host:port)
-// can be filled in before ffmpeg ever starts, and stays valid across ffmpeg
-// restarts/reconnects for the resource's whole lifetime.
+// ReserveWHEP ensures the loopback relay ports for a WHEP resource are
+// open and returns them. The ports are a deterministic function of the
+// resource name (see derivePort) rather than allocated from a pool, so a
+// UI can independently compute the same rtp://host:port ffmpeg output
+// address without any round-trip - this call only needs to happen once,
+// eagerly or lazily (WHEP() calls it automatically on first access), and
+// stays valid across ffmpeg restarts/reconnects for the resource's whole
+// lifetime.
 func (s *server) ReserveWHEP(resource string) (string, uint16, uint16, error) {
 	s.whepLock.Lock()
 	defer s.whepLock.Unlock()
 
+	return s.reserveWHEPLocked(resource)
+}
+
+func (s *server) reserveWHEPLocked(resource string) (string, uint16, uint16, error) {
 	if ch, ok := s.whepChannels[resource]; ok {
 		return s.relayAddress, ch.videoPort, ch.audioPort, nil
 	}
 
-	videoPort, err := s.portAlloc.Allocate()
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("allocating video port: %w", err)
+	videoPort := derivePort(s.portAlloc.min, s.portAlloc.max, "whep-video-", resource)
+	audioPort := derivePort(s.portAlloc.min, s.portAlloc.max, "whep-audio-", resource)
+
+	if videoPort == audioPort {
+		return "", 0, 0, fmt.Errorf("derived video/audio ports collide for resource %s, pick a different resource name", resource)
 	}
 
-	audioPort, err := s.portAlloc.Allocate()
-	if err != nil {
-		s.portAlloc.Release(videoPort)
-		return "", 0, 0, fmt.Errorf("allocating audio port: %w", err)
+	for other, ch := range s.whepChannels {
+		if ch.videoPort == videoPort || ch.videoPort == audioPort || ch.audioPort == videoPort || ch.audioPort == audioPort {
+			return "", 0, 0, fmt.Errorf("derived relay ports for resource %s collide with resource %s, pick a different resource name", resource, other)
+		}
 	}
 
 	ch := &whepChannel{
@@ -124,18 +132,16 @@ func (s *server) ReserveWHEP(resource string) (string, uint16, uint16, error) {
 		sessions:  map[string]*whepSession{},
 	}
 
+	var err error
+
 	ch.videoReceiver, err = newUDPReceiver(s.relayAddress, videoPort, ch.fanOutVideo)
 	if err != nil {
-		s.portAlloc.Release(videoPort)
-		s.portAlloc.Release(audioPort)
 		return "", 0, 0, fmt.Errorf("opening video relay: %w", err)
 	}
 
 	ch.audioReceiver, err = newUDPReceiver(s.relayAddress, audioPort, ch.fanOutAudio)
 	if err != nil {
 		ch.videoReceiver.Close()
-		s.portAlloc.Release(videoPort)
-		s.portAlloc.Release(audioPort)
 		return "", 0, 0, fmt.Errorf("opening audio relay: %w", err)
 	}
 
@@ -157,22 +163,22 @@ func (s *server) ReleaseWHEP(resource string) {
 	}
 
 	ch.Close()
-	s.portAlloc.Release(ch.videoPort)
-	s.portAlloc.Release(ch.audioPort)
 }
 
-// WHEP handles a new WHEP play request for an already-reserved resource.
+// WHEP handles a new WHEP play request. The resource's relay ports are
+// reserved automatically on first access if they aren't already.
 func (s *server) WHEP(resource, token, offer string) (string, string, error) {
 	if err := s.checkToken(token); err != nil {
 		return "", "", err
 	}
 
-	s.whepLock.RLock()
-	ch, ok := s.whepChannels[resource]
-	s.whepLock.RUnlock()
+	s.whepLock.Lock()
+	_, _, _, err := s.reserveWHEPLocked(resource)
+	ch := s.whepChannels[resource]
+	s.whepLock.Unlock()
 
-	if !ok {
-		return "", "", fmt.Errorf("resource %s is not configured for WHEP egress", resource)
+	if err != nil {
+		return "", "", err
 	}
 
 	pc, err := s.newPeerConnection()

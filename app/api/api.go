@@ -573,6 +573,10 @@ func (a *api) start() error {
 		}, map[string]string{
 			"latency": "20000", // 20 milliseconds, FFmpeg requires microseconds
 		})
+
+		a.replacer.RegisterTemplateFunc("whip", func(config *restreamapp.Config, section string) string {
+			return filepath.ToSlash(filepath.Join(cfg.Storage.Disk.Dir, "webrtc")) + "/{name}.sdp"
+		}, nil)
 	}
 
 	filesystems := []fs.Filesystem{
